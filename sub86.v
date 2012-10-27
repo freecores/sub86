@@ -44,10 +44,9 @@ wire   [32:0] adder_out,sub_out;
 `define mul2  5'b11010
  always @(posedge CLK or negedge RSTN)
    if(!RSTN) begin
-      EAX <= 32'b0; EBX <= 32'b0; ECX <= 32'b0; EDX <= 32'b0; 
-      EBP <= 32'b0; ESP <= 32'b011111111; PC  <= 32'b00000;
-      eqF <= 1'b0; lF <= 1'b0; gF <= 1'b0;
-      state <=5'b00000; prefx <= 1'b0; cry <= 1'b0;
+      ESP <= 32'b011111111; PC  <= 32'b0;
+      eqF <= 1'b0 ; lF <= 1'b0   ; gF  <= 1'b0;
+      state <=5'b0; prefx <= 1'b0; cry <= 1'b0;
       end
    else 
       begin	
@@ -68,7 +67,7 @@ wire   [32:0] adder_out,sub_out;
        else if (state==`mul)
         begin
 	 EAX <= {EAX[30:0],1'b0};
-	 if (EDX[0] == 1'b1) EBX <= EBX + EAX; else EBX <= EBX;
+	 if (EDX[0] == 1'b1) EBX <= EAX+EBX; else EBX <= EBX;
          EDX <= {1'b0,EDX[31:1]};
 	 ECX <= ECX; ESP <= ESP; EBP <= EBP;
         end 
@@ -131,24 +130,24 @@ always@(dest,EAX,ECX,EDX,EBX,ESP,EBP,D)
     default: regdest = EBX;
    endcase 
 // alu
-always@(regdest,regsrc,ID,cry,Zregsrc,Sregsrc,sft_out,adder_out,sub_out)
- begin
+always@(state,regdest,regsrc,ID,cry,Zregsrc,Sregsrc,sft_out,adder_out,sub_out)
+  if (state == `fetch )
   case (ID[15:10])
-   6'b000000 : {ncry,alu_out} =             adder_out ; // ADD , carry generation
-   6'b000010 : {ncry,alu_out} = {cry,regdest | regsrc}; // OR
-   6'b000100 : {ncry,alu_out} =             adder_out ; // ADD , carry use
-   6'b000110 : {ncry,alu_out} =               sub_out ; // SUB , carry use
-   6'b001000 : {ncry,alu_out} = {cry,regdest & regsrc}; // AND
-   6'b001010 : {ncry,alu_out} =               sub_out ; // SUB , carry generation
-   6'b001100 : {ncry,alu_out} = {cry,regdest ^ regsrc}; // XOR
-   6'b100010 : {ncry,alu_out} = {cry,          regsrc}; // MOVE
-   6'b101101 : {ncry,alu_out} = {cry,         Zregsrc}; // MOVE
-   6'b101111 : {ncry,alu_out} = {cry,         Sregsrc}; // MOVE
-   6'b110000 : {ncry,alu_out} = {cry,   sft_out[31:0]}; // SHIFT
-   6'b110100 : {ncry,alu_out} = {cry,   sft_out[31:0]}; // SHIFT
-   default   : {ncry,alu_out} = {cry,regdest         }; // DO NOTHING
+   6'b000000 : {ncry,alu_out} = 	    adder_out ;  // ADD , carry generation
+   6'b000010 : {ncry,alu_out} = {cry,regdest | regsrc};  // OR
+   6'b000100 : {ncry,alu_out} = 	    adder_out ;  // ADD , carry use
+   6'b000110 : {ncry,alu_out} = 	      sub_out ;  // SUB , carry use
+   6'b001000 : {ncry,alu_out} = {cry,regdest & regsrc};  // AND
+   6'b001010 : {ncry,alu_out} = 	      sub_out ;  // SUB , carry generation
+   6'b001100 : {ncry,alu_out} = {cry,regdest ^ regsrc};  // XOR
+   6'b100010 : {ncry,alu_out} = {cry,	       regsrc};  // MOVE
+   6'b101101 : {ncry,alu_out} = {cry,	      Zregsrc};  // MOVE
+   6'b101111 : {ncry,alu_out} = {cry,	      Sregsrc};  // MOVE
+   6'b110000 : {ncry,alu_out} = {cry,	sft_out[31:0]};  // SHIFT
+   6'b110100 : {ncry,alu_out} = {cry,	sft_out[31:0]};  // SHIFT
+   default   : {ncry,alu_out} = {cry,regdest	     };  // DO NOTHING
   endcase
- end
+  else {ncry,alu_out} = {cry,regdest	     };
 // Main instruction decode
 always @(ID,state,EDX)
  begin
@@ -218,8 +217,7 @@ assign  shtr    =       ID[12]      ?  ECX[4:0]     : EBX[4:0] ;
 assign  Q       = (state == `call2) ?  incPC        : regsrc   ;
 assign  WEN     = (ID[15:8]==8'h90) ?  1'b1         :
                   (state == `call2) ?  1'b0         :
-                  (dest  == 3'b111) ?  1'b0         :
-	                               1'b1         ;
+                  (dest  == 3'b111) ?  1'b0         : 1'b1     ;
 assign      tst = sft_in >>> (shtr);
 assign  sft_out = (src   == 3'b111) ? tst                : //sar
                   (src   == 3'b101) ? (sft_in >>  shtr ) : //shr
@@ -243,5 +241,5 @@ assign   pc_neq = ( eqF   ) ? incPC : pc_jp;
 assign   pc_jp  = incPC+{ID,EBX[15:0]};
 assign adder_out= nncry   + regsrc + regdest;
 assign   sub_out= regdest - regsrc - nncry;
-assign    nncry = ID[12] ? cry : 1'b0;
+assign    nncry = (ID[12] ? cry : 1'b0);
 endmodule
