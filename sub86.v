@@ -1,6 +1,5 @@
 module sub86( CLK, RSTN, IA, ID, A, D, Q, WEN,BEN );
-input         CLK;
-input         RSTN;
+input         CLK,RSTN;
 output [31:0] IA;
 input  [15:0] ID;
 output [31:0] A;
@@ -10,16 +9,13 @@ output        WEN;
 output  [1:0] BEN;
 wire          nncry,neqF,ngF,nlF;
 reg    [31:0] EAX,EBX,ECX,EDX,EBP,ESP,PC,regsrc,regdest,alu_out;
-reg           eqF,gF,lF;
 reg     [4:0] state,nstate;
-reg     [2:0] src,dest;
-reg           cry,ncry,prefx,nprefx,cmpr;
-wire   [31:0] incPC,Sregsrc,Zregsrc,pc_jg,pc_jge,pc_jl,pc_jle,pc_eq,pc_jp,pc_neq;
-wire   [63:0] mul_out;
-wire signed [31:0] sft_in,sft_out,tst;
 wire    [4:0] shtr;
-wire   [32:0] adder_out;
-wire   [32:0] sub_out;
+reg     [2:0] src,dest;
+reg           cry,ncry,prefx,nprefx,cmpr,eqF,gF,lF;
+wire   [31:0] incPC,Sregsrc,Zregsrc,pc_jg,pc_jge,pc_jl,pc_jle,pc_eq,pc_jp,pc_neq;
+wire signed [31:0] sft_in,sft_out,tst;
+wire   [32:0] adder_out,sub_out;
 `define fetch 5'b00000 
 `define jmp   5'b00001
 `define jmp2  5'b00010
@@ -33,7 +29,6 @@ wire   [32:0] sub_out;
 `define call2 5'b01010
 `define ret   5'b01011
 `define ret2  5'b01100
-`define imul  5'b01101
 `define shift 5'b01110
 `define jg    5'b01111
 `define jg2   5'b10000
@@ -45,15 +40,14 @@ wire   [32:0] sub_out;
 `define je2   5'b10110
 `define jne   5'b10111
 `define jne2  5'b11000
+`define mul   5'b11001
+`define mul2  5'b11010
  always @(posedge CLK or negedge RSTN)
    if(!RSTN) begin
-      EAX <= 32'b0; EBX <= 32'b0; 
-      ECX <= 32'b0; EDX <= 32'b0; 
-      EBP <= 32'b0; ESP <= 32'b011111111; 
-      PC  <= 32'b00000;
+      EAX <= 32'b0; EBX <= 32'b0; ECX <= 32'b0; EDX <= 32'b0; 
+      EBP <= 32'b0; ESP <= 32'b011111111; PC  <= 32'b00000;
       eqF <= 1'b0; lF <= 1'b0; gF <= 1'b0;
-      state <=5'b00000; prefx <= 1'b0;
-      cry <= 1'b0;
+      state <=5'b00000; prefx <= 1'b0; cry <= 1'b0;
       end
    else 
       begin	
@@ -71,12 +65,21 @@ wire   [32:0] sub_out;
          if (dest==3'b100) ESP <= alu_out; else ESP<=ESP;
          if (dest==3'b101) EBP <= alu_out; else EBP<=EBP;	 
         end 
-       else
+       else if (state==`mul)
         begin
-	 EBP<=EBP;
-         EAX<=EAX;
-         ECX<=ECX;
-         EDX<=EDX;
+	 EAX <= {EAX[30:0],1'b0};
+	 if (EDX[0] == 1'b1) EBX <= EBX + EAX; else EBX <= EBX;
+         EDX <= {1'b0,EDX[31:1]};
+	 ECX <= ECX; ESP <= ESP; EBP <= EBP;
+        end 
+       else if (state==`mul2)
+        begin
+	 EAX <= EBX; EBX <= EBX; EDX <= EDX; 
+	 ECX <= ECX; ESP <= ESP; EBP <= EBP;
+        end 
+       else
+        begin 
+	 EBP<=EBP; EAX<=EAX;ECX<=ECX; EDX<=EDX;
          case(state)
           `jmp , `jg, `jge , `jl, `jle, `je, `jne, `imm, `call,
 	  `lea    : EBX<={EBX[31:16],ID[7:0],ID[15:8]}; 
@@ -99,6 +102,7 @@ wire   [32:0] sub_out;
 	`jne2              : PC<=pc_neq;
 	`jmp2,`call2       : PC<=pc_jp ;
 	`ret2              : PC<=D     ;
+	`mul,`mul2         : PC<=PC    ;
 	default            : PC<=incPC ;
        endcase
       end
@@ -127,7 +131,7 @@ always@(dest,EAX,ECX,EDX,EBX,ESP,EBP,D)
     default: regdest = EBX;
    endcase 
 // alu
-always@(regdest,regsrc,ID,cry,mul_out,Zregsrc,Sregsrc,sft_out)
+always@(regdest,regsrc,ID,cry,Zregsrc,Sregsrc,sft_out,adder_out,sub_out)
  begin
   case (ID[15:10])
    6'b000000 : {ncry,alu_out} =             adder_out ; // ADD , carry generation
@@ -140,14 +144,13 @@ always@(regdest,regsrc,ID,cry,mul_out,Zregsrc,Sregsrc,sft_out)
    6'b100010 : {ncry,alu_out} = {cry,          regsrc}; // MOVE
    6'b101101 : {ncry,alu_out} = {cry,         Zregsrc}; // MOVE
    6'b101111 : {ncry,alu_out} = {cry,         Sregsrc}; // MOVE
-   6'b101011 : {ncry,alu_out} = {cry,   mul_out[31:0]}; // IMUL
    6'b110000 : {ncry,alu_out} = {cry,   sft_out[31:0]}; // SHIFT
    6'b110100 : {ncry,alu_out} = {cry,   sft_out[31:0]}; // SHIFT
    default   : {ncry,alu_out} = {cry,regdest         }; // DO NOTHING
   endcase
  end
 // Main instruction decode
-always @(ID,state)
+always @(ID,state,EDX)
  begin
    // One cycle instructions, operand selection
    if (state == `fetch)
@@ -156,7 +159,7 @@ always @(ID,state)
       4'b1000  : begin src=ID[5:3]; dest= 3'b111; end  // store into ram (x89 x00)
       4'b1010  : begin src= 3'b111; dest=ID[5:3]; end  // load from ram  (x8b x00)
       4'b1001  : begin src=ID[5:3]; dest=ID[2:0]; end  // reg2reg xfer   (x89 xC0)
-      4'b1011  : begin src=ID[2:0]; dest=ID[5:3]; end  // reg2reg xfer   (x8b xC0) & imul
+      4'b1011  : begin src=ID[2:0]; dest=ID[5:3]; end  // reg2reg xfer   (x8b xC0)
       4'b0001  : begin src=ID[5:3]; dest=ID[2:0]; end  // alu op
       4'b0011  : begin src=ID[2:0]; dest=ID[5:3]; end  // alu op
       default  : begin src=ID[5:3]; dest=ID[2:0]; end  // shift
@@ -180,7 +183,8 @@ always @(ID,state)
      16'h8d9d: nstate = `lea;
      16'h90e8: nstate = `call;
      16'h90c3: nstate = `ret;
-     16'hc1xx: nstate = `shift;     
+     16'hc1xx: nstate = `shift; 
+     16'hafc2: nstate = `mul;    
      default : nstate = `fetch;
     endcase
     if (ID       == 16'h9066) nprefx = 1'b1; else nprefx = 1'b0;
@@ -188,9 +192,11 @@ always @(ID,state)
    end
    else 
    begin
-        nprefx = 1'b0;
-	cmpr   = 1'b0;
-        if (state==`jmp)   nstate = `jmp2;  else if (state==`jmp2)  nstate = `fetch;
+        nprefx = 1'b0; cmpr   = 1'b0;
+	if((state==`mul)&&!(EDX==32'b0)) nstate=`mul;
+   else if((state==`mul)&& (EDX==32'b0)) nstate=`mul2;
+   else if (state==`mul2)  nstate = `fetch;   
+   else if (state==`jmp)   nstate = `jmp2;  else if (state==`jmp2)  nstate = `fetch;
    else if (state==`jne)   nstate = `jne2;  else if (state==`jne2)  nstate = `fetch;
    else if (state==`je )   nstate = `je2 ;  else if (state==`je2 )  nstate = `fetch;
    else if (state==`jge)   nstate = `jge2;  else if (state==`jge2)  nstate = `fetch;
@@ -206,10 +212,8 @@ always @(ID,state)
    end   
  end
 assign  IA      = PC                ;
-assign  A       = (state == `call2) ?  ESP :
-		                       EBX ;
-assign  mul_out = regsrc * regdest  ;
 assign  sft_in  = regdest           ;
+assign  A       = (state == `call2) ?  ESP          : EBX      ;
 assign  shtr    =       ID[12]      ?  ECX[4:0]     : EBX[4:0] ;
 assign  Q       = (state == `call2) ?  incPC        : regsrc   ;
 assign  WEN     = (ID[15:8]==8'h90) ?  1'b1         :
