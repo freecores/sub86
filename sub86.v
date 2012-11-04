@@ -7,7 +7,7 @@ input  [31:0] D;
 output [31:0] Q;
 output        WEN;
 output  [1:0] BEN;
-wire          nncry,neqF,ngF,nlF,naF,nbF;
+wire          nncry,neqF,ngF,nlF,naF,nbF,divF1,divF2;
 reg    [31:0] EAX,EBX,ECX,EDX,EBP,ESP,PC,regsrc,regdest,alu_out;
 reg     [5:0] state,nstate;
 reg     [2:0] src,dest;
@@ -56,12 +56,18 @@ wire signed [31:0] ssregsrc, ssregdest;
 `define sml2  6'b100101
 `define sml3  6'b100110
 `define sml4  6'b100111
+`define sdv1  6'b101000
+`define sdv2  6'b101001
+`define sdv3  6'b101010
+`define sdv4  6'b101011
+`define div1  6'b101100
 `define init  6'b000000
  always @(posedge CLK)
      begin
       case (state) // cry control
-         `sml1     : cry <= EAX[31] ^ ECX[31];
-	 default   : cry <= ncry & RSTN;
+         `sml1,`sdv1: cry <= EAX[31] ^ ECX[31];
+	 `div1      : cry <= 1'b0;
+	 default    : cry <= ncry & RSTN;
       endcase 
       prefx <= nprefx & RSTN;
       state <= nstate & {6{RSTN}};
@@ -74,6 +80,9 @@ wire signed [31:0] ssregsrc, ssregdest;
 	`mul2       : EAX <= EBX;
 	`sml1       : EAX <= smlEAX;
 	`sml3       : if (cry==1'b0) EAX <= EBX; else EAX <= ((~EBX) + 1'b1);
+	`sdv1,`div1 : EAX <= 32'b0;
+	`sdv3       : if (nlF==1'b0) EAX <= EAX + ( 1 << EBX_shtr); else EAX <=EAX;
+	`sdv4       : if (cry==1'b1) EAX <= ((~EAX) + 1'b1); else EAX <= EAX;
 	default: if (dest==3'b000) EAX <= alu_out; else EAX<=EAX;
       endcase
       case(state)  // EBX control
@@ -83,14 +92,28 @@ wire signed [31:0] ssregsrc, ssregdest;
 	`lea2       : EBX<={ID[7:0],ID[15:8], EBX[15:0]}+EBP;       
 	`mul,`sml2  : if (ECX[0] == 1'b1) EBX <= EAX+EBX; else EBX <= EBX;
 	`shift      : EBX<={EBX[31:5],EBX_shtr};
+	`sdv1       : EBX<={EAX[31],ECX[31],EBX[29:0]};
+	`div1       : EBX<={          2'b00,EBX[29:0]};
+	`sdv2       : if (divF1==1'b0 ) EBX <= {EBX[31:5],(EBX[4:0]+1'b1)}; else EBX <= EBX;
+	`sdv3       : if (divF1==1'b1 ) EBX <= {EBX[31:5],EBX_shtr}; else EBX <= EBX;
 	default     : if (dest==3'b011) EBX <= alu_out; else EBX <= EBX;
       endcase
       case(state)  // ECX control
         `mul,`sml2  : ECX <= {1'b0,ECX[31:1]};
-	`sml1       : ECX <= smlECX;
+	`sml1,`sdv1 : ECX <= smlECX;
+	`div1       : ECX <= ECX;
+	`sdv2       : if (divF1==1'b0 ) ECX <= {ECX[30:0],1'b0}; else ECX<=ECX;
+	`sdv3       : if((divF1==1'b1 ) && (divF2==1'b0)) ECX <= {1'b0,ECX[31:1]}; else ECX<=ECX;
+        `sdv4       : if (EBX[30] == 1'b1) ECX <= ((~ECX) + 1); else ECX<=ECX;
 	default     : if (dest==3'b001) ECX <= alu_out; else ECX<=ECX;
       endcase
-      if (dest==3'b010) EDX <= alu_out; else EDX<=EDX;  // EDX control       
+      case(state)  // EDX control
+	`sdv1       : EDX <= smlEAX;
+	`div1       : EDX <=    EAX;
+	`sdv3       : if (nlF==1'b0) EDX <= EDX - ECX; else EDX <= EDX;
+        `sdv4       : if (EBX[31] == 1'b1) EDX <= ((~EDX) + 1); else EDX<=EDX;
+	default     : if (dest==3'b010) EDX <= alu_out; else EDX<=EDX;
+      endcase     
       case(state)  // ESP control
         `init       : ESP<=32'h00ff;
         `call       : ESP<=ESP - 4'b0100;
@@ -112,7 +135,7 @@ wire signed [31:0] ssregsrc, ssregdest;
        `jne2        : PC<=pc_neq;
        `jmp2,`call2 : PC<=pc_jp ;
        `ret2        : PC<=D	;
-       `mul,`mul2,`sml1,`sml2,`sml3,`sml4,
+       `mul,`mul2,`sml1,`sml2,`sml3,`sml4,`sdv1,`sdv2,`sdv3,`sdv4,`div1,
        `shift       : PC<=PC	;
        default      : if (nstate == `shift) PC<=PC; else PC<=incPC ;
       endcase
@@ -160,7 +183,7 @@ always@(state,regdest,regsrc,ID,cry,Zregsrc,Sregsrc,sft_out,adder_out,sub_out)
   else if (state == `shift ) {ncry,alu_out} = {cry,sft_out	     };
   else {ncry,alu_out} = {cry,regdest	     };
 // Main instruction decode
-always @(ID,state,ECX,EBX_shtr)
+always @(ID,state,ECX,EBX_shtr,EAX,divF1,divF2)
  begin
    // One cycle instructions, operand selection
    if ((state == `fetch) || (state ==`shift))
@@ -175,6 +198,8 @@ always @(ID,state,ECX,EBX_shtr)
      endcase
    else if (state==`ret)
         begin src = 3'b011; dest = 3'b100; end
+   else if (state==`sdv3)
+        begin src = 3'b001; dest = 3'b010; end
    else begin src = 3'b000; dest = 3'b000; end   
    // instructions that require more than one cycle to execute
    if (state == `fetch)    
@@ -197,7 +222,9 @@ always @(ID,state,ECX,EBX_shtr)
      16'h90c3: nstate = `ret;
      16'hc1xx: nstate = `shift; 
      16'hd3xx: nstate = `shift; 
-     16'hf7e1: nstate = `mul;    
+     16'hf7e1: nstate = `mul; 
+     16'hf7f9: nstate = `sdv1;   
+     16'hf7f1: nstate = `div1;   
      16'hafc1: nstate = `sml1;    
      default : nstate = `fetch;
     endcase
@@ -213,7 +240,12 @@ always @(ID,state,ECX,EBX_shtr)
    else if (state==`sml1)  nstate = `sml2;   
    else if((state==`sml2)&&!(ECX==32'b0)) nstate=`sml2;
    else if((state==`sml2)&& (ECX==32'b0)) nstate=`sml3;
-   else if (state==`sml1)  nstate = `sml3;      
+   else if (state==`div1)  nstate = `sdv2;   
+   else if (state==`sdv1)  nstate = `sdv2;   
+   else if((state==`sdv2) && (divF1 == 1'b0) ) nstate=`sdv2;
+   else if((state==`sdv2) && (divF1 == 1'b1) ) nstate=`sdv3;
+   else if((state==`sdv3) && (divF2 == 1'b0) ) nstate=`sdv3;
+   else if((state==`sdv3) && (divF2 == 1'b1) ) nstate=`sdv4;
    else if (state==`jmp)   nstate = `jmp2;  else if (state==`jmp2)  nstate = `fetch;
    else if (state==`jne)   nstate = `jne2;  else if (state==`jne2)  nstate = `fetch;
    else if (state==`je )   nstate = `je2 ;  else if (state==`je2 )  nstate = `fetch;
@@ -271,6 +303,8 @@ assign adder_out= nncry   + regsrc + regdest;
 assign   sub_out= regdest - regsrc - nncry;
 assign    nncry = (ID[12] ? cry : 1'b0);
 assign EBX_shtr = EBX[4:0] - 1'b1;
-assign smlEAX   = EAX[31] ? ((~EAX) + 1) : EAX;
-assign smlECX   = ECX[31] ? ((~ECX) + 1) : ECX;
+assign   smlEAX = EAX[31] ? ((~EAX) + 1) : EAX;
+assign   smlECX = ECX[31] ? ((~ECX) + 1) : ECX;
+assign    divF1 = ({ECX[30:0],1'b0}  > EDX) ? 1'b1 : 1'b0;
+assign    divF2 = (EBX_shtr == 5'b00000) ? 1'b1 : 1'b0;
 endmodule
