@@ -63,7 +63,10 @@ wire signed [31:0] ssregsrc, ssregdest;
 `define sdv4  6'b101011
 `define div1  6'b101100
 `define leas  6'b101101
+`define calla 6'b101110
+`define calla2 6'b101111
 `define init  6'b000000
+
  always @(posedge CLK)
    if ((CE ==1'b1) || (RSTN ==1'b0))
      begin
@@ -124,8 +127,8 @@ wire signed [31:0] ssregsrc, ssregdest;
 	default     : if (dest==3'b010) EDX <= alu_out; else EDX<=EDX;
       endcase     
       case(state)  // ESP control
-        `init       : ESP <= 32'hfffe01ff;
-        `call       : ESP <= ESP - 4'b0100;
+        `init       : ESP <= 32'h01ff00;
+        `call,`calla: ESP <= ESP - 4'b0100;
         `ret2       : ESP <= ESP + 4'b0100; 
        default: if (dest==3'b100) ESP <= alu_out; else ESP<=ESP;
       endcase
@@ -143,6 +146,7 @@ wire signed [31:0] ssregsrc, ssregdest;
        `je2         : PC<=pc_eq ;
        `jne2        : PC<=pc_neq;
        `jmp2,`call2 : PC<=pc_jp ;
+       `calla2      : PC<=EBX;
        `ret2        : PC<=D	;
        `mul,`mul2,`sml1,`sml2,`sml3,`sml4,`sdv1,`sdv2,`sdv3,`sdv4,`div1,
        `shift       : PC<=PC	;
@@ -241,6 +245,7 @@ always @(ID,state,ECX,EBX_shtr,EAX,divF1,divF2)
      16'hf7f9: nstate = `sdv1;   
      16'hf7f1: nstate = `div1;   
      16'hafc1: nstate = `sml1;    
+     16'hffd3: nstate = `calla;    
      default : nstate = `fetch;
     endcase
     if (ID       == 16'h9066) nprefx = 1'b1; else nprefx = 1'b0;
@@ -275,6 +280,7 @@ always @(ID,state,ECX,EBX_shtr,EAX,divF1,divF2)
    else if (state==`imm)   nstate = `imm2;  else if (state==`imm2)  nstate = `fetch;
    else if (state==`lea)   nstate = `lea2;  else if (state==`lea2)  nstate = `fetch;
    else if (state==`call)  nstate = `call2; else if (state==`call2) nstate = `fetch;
+   else if (state==`calla) nstate = `calla2;else if (state==`calla2)nstate = `fetch;
    else if (state==`ret)   nstate = `ret2;  else if (state==`ret2)  nstate = `fetch;
    else if((state==`shift)&&!(EBX_shtr==5'b0)) nstate=`shift;
    else if((state==`shift)&& (EBX_shtr==5'b0)) nstate=`shft2;
@@ -284,21 +290,22 @@ always @(ID,state,ECX,EBX_shtr,EAX,divF1,divF2)
 assign ssregsrc = regsrc;
 assign ssregdest= regdest;
 assign  IA      = PC                ;
-assign  A       = (state == `call2) ?  ESP          : EBX      ;
-assign  Q       = (state == `call2) ?  incPC        : regsrc   ;
+assign  A       =((state == `call2)|(state == `calla2)) ?  ESP          : EBX      ;
+assign  Q       =((state == `call2)|(state == `calla2)) ?  incPC        : regsrc   ;
 assign  WEN     = (CE    ==   1'b0) ?  1'b1         :
                   ({ID[15:9],ID[7]}==8'h88)?  1'b0  :
-                  (state == `call2) ?  1'b0         : 1'b1     ;
+                  (state == `call2) ?  1'b0         :
+		  (state == `calla2)?  1'b0         : 1'b1     ;
 assign  Sregsrc =       ID[8]       ? { {16{regsrc[15]}} , regsrc[15:0] } :
                                       { {24{regsrc[7] }} , regsrc[7:0]  } ;
 assign  Zregsrc =       ID[8]       ? {  16'b0           , regsrc[15:0] } :
                                       {  24'b0           , regsrc[7:0]  } ;
 assign      BEN = (state == `call2 )  ? 1'b1 : { prefx   , ID[8]        } ;
 assign     neqF = (regsrc == regdest) ? 1'b1 : 1'b0;
-assign      nlF = (regsrc  > regdest) ? 1'b1 : 1'b0;
-assign      ngF = ~(nlF | neqF );// (regsrc  < regdest) ? 1'b1 : 1'b0;
-assign      nbF = (ssregsrc  > ssregdest) ? 1'b1 : 1'b0;
-assign      naF = ~(nbF | neqF );// (regsrc  < regdest) ? 1'b1 : 1'b0;
+assign      nbF = (regsrc  > regdest) ? 1'b1 : 1'b0;
+assign      naF = ~(nlF | neqF );// (regsrc  < regdest) ? 1'b1 : 1'b0;
+assign      nlF = (ssregsrc  > ssregdest) ? 1'b1 : 1'b0;
+assign      ngF = ~(nbF | neqF );// (regsrc  < regdest) ? 1'b1 : 1'b0;
 assign    incPC = PC + 3'b010;
 assign   pc_jge = (eqF|gF) ? pc_jp : incPC;
 assign   pc_jle = (eqF|lF) ? pc_jp : incPC;
