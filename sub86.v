@@ -65,6 +65,7 @@ wire signed [31:0] ssregsrc, ssregdest;
 `define leas  6'b101101
 `define calla 6'b101110
 `define calla2 6'b101111
+`define shft3 6'b110000
 `define init  6'b000000
 
  always @(posedge CLK)
@@ -122,12 +123,12 @@ wire signed [31:0] ssregsrc, ssregdest;
         `init       : EDX <= 32'b0;
 	`sdv1       : EDX <= smlEAX;
 	`div1       : EDX <=    EAX;
-	`sdv3       : if (nlF==1'b0) EDX <= EDX - ECX; else EDX <= EDX;
+	`sdv3       : if (nbF==1'b0) EDX <= EDX - ECX; else EDX <= EDX;
         `sdv4       : if (EBX[31] == 1'b1) EDX <= ((~EDX) + 1); else EDX<=EDX;
 	default     : if (dest==3'b010) EDX <= alu_out; else EDX<=EDX;
       endcase     
       case(state)  // ESP control
-        `init       : ESP <= 32'h01ff00;
+        `init       : ESP <= 32'h01f1fc;
         `call,`calla: ESP <= ESP - 4'b0100;
         `ret2       : ESP <= ESP + 4'b0100; 
        default: if (dest==3'b100) ESP <= alu_out; else ESP<=ESP;
@@ -284,6 +285,7 @@ always @(ID,state,ECX,EBX_shtr,EAX,divF1,divF2)
    else if (state==`ret)   nstate = `ret2;  else if (state==`ret2)  nstate = `fetch;
    else if((state==`shift)&&!(EBX_shtr==5'b0)) nstate=`shift;
    else if((state==`shift)&& (EBX_shtr==5'b0)) nstate=`shft2;
+   else if (state==`shft2) nstate = `shft3;
    else                    nstate = `fetch;
    end   
  end
@@ -300,7 +302,7 @@ assign  Sregsrc =       ID[8]       ? { {16{regsrc[15]}} , regsrc[15:0] } :
                                       { {24{regsrc[7] }} , regsrc[7:0]  } ;
 assign  Zregsrc =       ID[8]       ? {  16'b0           , regsrc[15:0] } :
                                       {  24'b0           , regsrc[7:0]  } ;
-assign      BEN = (state == `call2 )  ? 1'b1 : { prefx   , ID[8]        } ;
+assign      BEN =((state == `call2)|(state == `calla2)) ? 1'b1 : { prefx   , ID[8]        } ;
 assign     neqF = (regsrc == regdest) ? 1'b1 : 1'b0;
 assign      nbF = (regsrc  > regdest) ? 1'b1 : 1'b0;
 assign      naF = ~(nlF | neqF );// (regsrc  < regdest) ? 1'b1 : 1'b0;
@@ -328,6 +330,6 @@ assign    nncry = (ID[12] ? cry : 1'b0);
 assign EBX_shtr = EBX[4:0] - 1'b1;
 assign   smlEAX = EAX[31] ? ((~EAX) + 1) : EAX;
 assign   smlECX = ECX[31] ? ((~ECX) + 1) : ECX;
-assign    divF1 = ({ECX[30:0],1'b0}  > EDX) ? 1'b1 : 1'b0;
+assign    divF1 = ({ECX[31:0],1'b0}  > {1'b0,EDX}) ? 1'b1 : 1'b0;
 assign    divF2 = (EBX_shtr == 5'b00000) ? 1'b1 : 1'b0;
 endmodule
