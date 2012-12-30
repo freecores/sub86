@@ -1,18 +1,17 @@
-module sub86( CLK, RSTN, IA, ID, A, D, Q, WEN,BEN,CE,RD );
-input         CLK,RSTN,CE;
-output [31:0] IA;
+module sub86( CLK, RSTN, IA, ID, A, D, Q, WEN,BEN,CE,RD,INT );
+input         CLK,RSTN,CE,INT;
 input  [15:0] ID;
-output [31:0] A;
 input  [31:0] D;
+output [31:0] IA;
+output [31:0] A;
 output [31:0] Q;
-output        WEN;
-output        RD;
+output        WEN,RD;
 output  [1:0] BEN;
-wire          nncry,neqF,ngF,nlF,naF,nbF,divF1,divF2;
 reg    [31:0] EAX,EBX,ECX,EDX,EBP,ESP,PC,regsrc,regdest,alu_out;
 reg     [5:0] state,nstate;
 reg     [2:0] src,dest;
 reg           WR,RD,cry,ncry,prefx,nprefx,cmpr,eqF,gF,lF,aF,bF;
+wire          nncry,neqF,ngF,nlF,naF,nbF,divF1,divF2;
 wire   [31:0] pc_ja,pc_jae,pc_jb,pc_jbe,pc_jg,pc_jge,pc_jl,pc_jle,pc_eq,pc_jp,pc_neq,pc_sh;
 wire   [31:0] Sregsrc,Zregsrc,incPC,sft_out,smlEAX,smlECX;
 wire   [32:0] adder_out,sub_out;
@@ -290,7 +289,7 @@ always @(ID,state,ECX,EBX_shtr,EAX,divF1,divF2)
 assign ssregsrc = regsrc;
 assign ssregdest= regdest;
 assign  IA      = PC                ;
-assign  A       =((state == `call2)|(state == `calla2)|((WR==1)&(ID[2:0]==3'b100))) ?  ESP          : EBX      ;
+assign  A       =((state == `call2)|(state == `calla2)) ?  ESP          : EBX      ;
 assign  Q       =((state == `call2)|(state == `calla2)) ?  incPC        : regsrc   ;
 assign  WEN     = (CE    ==   1'b0) ?  1'b1         :
                   (WR    ==   1'b1) ?  1'b0         :
