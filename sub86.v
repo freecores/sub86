@@ -12,7 +12,7 @@ wire          nncry,neqF,ngF,nlF,naF,nbF,divF1,divF2;
 reg    [31:0] EAX,EBX,ECX,EDX,EBP,ESP,PC,regsrc,regdest,alu_out;
 reg     [5:0] state,nstate;
 reg     [2:0] src,dest;
-reg           RD,cry,ncry,prefx,nprefx,cmpr,eqF,gF,lF,aF,bF;
+reg           WR,RD,cry,ncry,prefx,nprefx,cmpr,eqF,gF,lF,aF,bF;
 wire   [31:0] pc_ja,pc_jae,pc_jb,pc_jbe,pc_jg,pc_jge,pc_jl,pc_jle,pc_eq,pc_jp,pc_neq,pc_sh;
 wire   [31:0] Sregsrc,Zregsrc,incPC,sft_out,smlEAX,smlECX;
 wire   [32:0] adder_out,sub_out;
@@ -128,14 +128,14 @@ wire signed [31:0] ssregsrc, ssregdest;
 	default     : if (dest==3'b010) EDX <= alu_out; else EDX<=EDX;
       endcase     
       case(state)  // ESP control
-        `init       : ESP <= 32'h01f1fc;
-        `call,`calla: ESP <= ESP - 4'b0100;
-        `ret2       : ESP <= ESP + 4'b0100; 
+        `init        : ESP <= 32'h03b1fc;
+        `call,`calla : ESP <= ESP - 4'b0100;
+        `ret2        : ESP <= ESP + 4'b0100; 
        default: if (dest==3'b100) ESP <= alu_out; else ESP<=ESP;
       endcase
       if (dest==3'b101) EBP <= alu_out; else EBP<=EBP;	// EBP control 
       case(state)  // PC control
-       `init        : PC<=32'h00;
+       `init        : PC<=32'h0020000;
        `jae2        : PC<=pc_jae;
        `jbe2        : PC<=pc_jbe;
        `ja2         : PC<=pc_ja ;
@@ -151,7 +151,7 @@ wire signed [31:0] ssregsrc, ssregdest;
        `ret2        : PC<=D	;
        `mul,`mul2,`sml1,`sml2,`sml3,`sml4,`sdv1,`sdv2,`sdv3,`sdv4,`div1,
        `shift       : PC<=PC	;
-       default      : if (nstate == `shift) PC<=PC; 
+       default      : if (nstate == `shift) PC<=PC;
                  else if (ID[15:8]==8'heb) PC <= pc_sh;
                  else if((ID[15:8]==8'h75) && (eqF==1'b0)) PC <= pc_sh;
                  else if((ID[15:8]==8'h74) && (eqF==1'b1)) PC <= pc_sh;
@@ -196,8 +196,6 @@ always@(state,regdest,regsrc,ID,cry,Zregsrc,Sregsrc,sft_out,adder_out,sub_out)
    6'b100010 : {ncry,alu_out} = {cry,	       regsrc};  // MOVE
    6'b101101 : {ncry,alu_out} = {cry,	      Zregsrc};  // MOVE
    6'b101111 : {ncry,alu_out} = {cry,	      Sregsrc};  // MOVE
-   //6'b110000 : {ncry,alu_out} = {cry,	sft_out[31:0]};  // SHIFT
-   //6'b110100 : {ncry,alu_out} = {cry,	sft_out[31:0]};  // SHIFT
    default   : {ncry,alu_out} = {cry,regdest	     };  // DO NOTHING
   endcase
   else if (state == `shift ) {ncry,alu_out} = {cry,sft_out	     };
@@ -207,19 +205,19 @@ always @(ID,state,ECX,EBX_shtr,EAX,divF1,divF2)
  begin
    // One cycle instructions, operand selection
    if ((state == `fetch) || (state ==`shift))
-     casex ({ID[15:14],ID[13],ID[9],ID[7]})
-      5'b10x00  : begin RD=0; src=ID[5:3]; dest= 3'b111; end  // store into ram (x89 x00)
-      5'b10010  : begin RD=1; src= 3'b111; dest=ID[5:3]; end  // load from ram  (x8b x00)
-      5'b10110  : begin RD=0; src= 3'b111; dest=ID[5:3]; end  // load bl with immediate
-      5'b10x11  : begin RD=0; src=ID[2:0]; dest=ID[5:3]; end  // reg2reg xfer   (x8b xC0)
-      5'b00x11  : begin RD=0; src=ID[2:0]; dest=ID[5:3]; end  // alu op
-      default   : begin RD=0; src=ID[5:3]; dest=ID[2:0]; end  // shift
+     casex ({ID[15:12],ID[10:9],ID[7]})
+      7'b10x0000  : begin RD=0;WR=1; src=ID[5:3]; dest= 3'b111; end  // store into ram (x89 x00)
+      7'b100xx10  : begin RD=1;WR=0; src= 3'b111; dest=ID[5:3]; end  // load from ram  (x8b x00)
+      7'b101xx10  : begin RD=0;WR=0; src= 3'b111; dest=ID[5:3]; end  // load bl with immediate
+      7'b10xxx11  : begin RD=0;WR=0; src=ID[2:0]; dest=ID[5:3]; end  // reg2reg xfer   (x8b xC0)
+      7'b00xxx11  : begin RD=0;WR=0; src=ID[2:0]; dest=ID[5:3]; end  // alu op
+      default   : begin RD=0;WR=0; src=ID[5:3]; dest=ID[2:0]; end  // shift
      endcase
    else if (state==`ret)
-        begin src = 3'b011; dest = 3'b100; RD=0; end
+        begin src = 3'b011; dest = 3'b100; RD=0; WR=0; end
    else if (state==`sdv3)
-        begin src = 3'b001; dest = 3'b010; RD=0; end
-   else begin src = 3'b000; dest = 3'b000; RD=0; end   
+        begin src = 3'b001; dest = 3'b010; RD=0; WR=0; end
+   else begin src = 3'b000; dest = 3'b000; RD=0; WR=0; end   
    // instructions that require more than one cycle to execute
    if (state == `fetch)    
    begin
@@ -246,7 +244,7 @@ always @(ID,state,ECX,EBX_shtr,EAX,divF1,divF2)
      16'hf7f9: nstate = `sdv1;   
      16'hf7f1: nstate = `div1;   
      16'hafc1: nstate = `sml1;    
-     16'hffd3: nstate = `calla;    
+     16'hffd3: nstate = `calla; 
      default : nstate = `fetch;
     endcase
     if (ID       == 16'h9066) nprefx = 1'b1; else nprefx = 1'b0;
@@ -292,10 +290,10 @@ always @(ID,state,ECX,EBX_shtr,EAX,divF1,divF2)
 assign ssregsrc = regsrc;
 assign ssregdest= regdest;
 assign  IA      = PC                ;
-assign  A       =((state == `call2)|(state == `calla2)) ?  ESP          : EBX      ;
+assign  A       =((state == `call2)|(state == `calla2)|((WR==1)&(ID[2:0]==3'b100))) ?  ESP          : EBX      ;
 assign  Q       =((state == `call2)|(state == `calla2)) ?  incPC        : regsrc   ;
 assign  WEN     = (CE    ==   1'b0) ?  1'b1         :
-                  ({ID[15:9],ID[7]}==8'h88)?  1'b0  :
+                  (WR    ==   1'b1) ?  1'b0         :
                   (state == `call2) ?  1'b0         :
 		  (state == `calla2)?  1'b0         : 1'b1     ;
 assign  Sregsrc =       ID[8]       ? { {16{regsrc[15]}} , regsrc[15:0] } :
@@ -305,9 +303,9 @@ assign  Zregsrc =       ID[8]       ? {  16'b0           , regsrc[15:0] } :
 assign      BEN =((state == `call2)|(state == `calla2)) ? 1'b1 : { prefx   , ID[8]        } ;
 assign     neqF = (regsrc == regdest) ? 1'b1 : 1'b0;
 assign      nbF = (regsrc  > regdest) ? 1'b1 : 1'b0;
-assign      naF = ~(nlF | neqF );// (regsrc  < regdest) ? 1'b1 : 1'b0;
+assign      naF = ~(nlF | neqF );
 assign      nlF = (ssregsrc  > ssregdest) ? 1'b1 : 1'b0;
-assign      ngF = ~(nbF | neqF );// (regsrc  < regdest) ? 1'b1 : 1'b0;
+assign      ngF = ~(nbF | neqF );
 assign    incPC = PC + 3'b010;
 assign   pc_jge = (eqF|gF) ? pc_jp : incPC;
 assign   pc_jle = (eqF|lF) ? pc_jp : incPC;
