@@ -10,8 +10,8 @@ output  [1:0] BEN;
 reg    [31:0] EAX,EBX,ECX,EDX,EBP,ESP,PC,regsrc,regdest,alu_out;
 reg     [5:0] state,nstate;
 reg     [2:0] src,dest;
-reg           WR,RD,cry,ncry,prefx,nprefx,cmpr,eqF,gF,lF,aF,bF;
-wire          nncry,neqF,ngF,nlF,naF,nbF,divF1,divF2;
+reg           INTreg,WR,RD,cry,ncry,prefx,nprefx,cmpr,eqF,gF,lF,aF,bF;
+wire          INTvalid,nncry,neqF,ngF,nlF,naF,nbF,divF1,divF2;
 wire   [31:0] pc_ja,pc_jae,pc_jb,pc_jbe,pc_jg,pc_jge,pc_jl,pc_jle,pc_eq,pc_jp,pc_neq,pc_sh;
 wire   [31:0] Sregsrc,Zregsrc,incPC,sft_out,smlEAX,smlECX;
 wire   [32:0] adder_out,sub_out;
@@ -65,7 +65,17 @@ wire signed [31:0] ssregsrc, ssregdest;
 `define calla 6'b101110
 `define calla2 6'b101111
 `define shft3 6'b110000
+`define int1  6'b110001
+`define int2  6'b110010
 `define init  6'b000000
+
+ always @(posedge CLK)
+      casex ({RSTN,INT,((RD|WR)&CE)}) // interrupt control
+        3'b0xx   : INTreg <= 1'b0;
+	3'b11x   : INTreg <= 1'b1;
+	3'b1x1   : INTreg <= 1'b0;
+	default  : INTreg <= INTreg;	
+      endcase
 
  always @(posedge CLK)
    if ((CE ==1'b1) || (RSTN ==1'b0))
@@ -127,14 +137,15 @@ wire signed [31:0] ssregsrc, ssregdest;
 	default     : if (dest==3'b010) EDX <= alu_out; else EDX<=EDX;
       endcase     
       case(state)  // ESP control
-        `init        : ESP <= 32'h03b1fc;
-        `call,`calla : ESP <= ESP - 4'b0100;
-        `ret2        : ESP <= ESP + 4'b0100; 
+        `init              : ESP <= 32'h0161fc;
+        `call,`calla,`int1 : ESP <= ESP - 4'b0100;
+        `ret2              : ESP <= ESP + 4'b0100; 
        default: if (dest==3'b100) ESP <= alu_out; else ESP<=ESP;
       endcase
       if (dest==3'b101) EBP <= alu_out; else EBP<=EBP;	// EBP control 
       case(state)  // PC control
-       `init        : PC<=32'h0020000;
+       `init        : PC<=32'h0001000;
+       `int2        : PC<=32'h0;
        `jae2        : PC<=pc_jae;
        `jbe2        : PC<=pc_jbe;
        `ja2         : PC<=pc_ja ;
@@ -149,12 +160,13 @@ wire signed [31:0] ssregsrc, ssregdest;
        `calla2      : PC<=EBX;
        `ret2        : PC<=D	;
        `mul,`mul2,`sml1,`sml2,`sml3,`sml4,`sdv1,`sdv2,`sdv3,`sdv4,`div1,
-       `shift       : PC<=PC	;
-       default      : if (nstate == `shift) PC<=PC;
+       `shift,`int1 : PC<=PC	;
+       `fetch       : if (nstate == `shift) PC<=PC;
                  else if (ID[15:8]==8'heb) PC <= pc_sh;
                  else if((ID[15:8]==8'h75) && (eqF==1'b0)) PC <= pc_sh;
                  else if((ID[15:8]==8'h74) && (eqF==1'b1)) PC <= pc_sh;
 		 else PC<=incPC ;
+       default      : PC<=incPC ;
       endcase
      end
 // muxing for source selection, used in alu & moves
@@ -200,7 +212,7 @@ always@(state,regdest,regsrc,ID,cry,Zregsrc,Sregsrc,sft_out,adder_out,sub_out)
   else if (state == `shift ) {ncry,alu_out} = {cry,sft_out	     };
   else {ncry,alu_out} = {cry,regdest	     };
 // Main instruction decode
-always @(ID,state,ECX,EBX_shtr,EAX,divF1,divF2)
+always @(ID,state,ECX,EBX_shtr,EAX,divF1,divF2,INTvalid)
  begin
    // One cycle instructions, operand selection
    if ((state == `fetch) || (state ==`shift))
@@ -218,32 +230,33 @@ always @(ID,state,ECX,EBX_shtr,EAX,divF1,divF2)
         begin src = 3'b001; dest = 3'b010; RD=0; WR=0; end
    else begin src = 3'b000; dest = 3'b000; RD=0; WR=0; end   
    // instructions that require more than one cycle to execute
-   if (state == `fetch)    
-   begin
-    casex(ID)
-     16'h90e9: nstate = `jmp;   
-     16'h0f87: nstate = `ja;
-     16'h0f86: nstate = `jbe;
-     16'h0f83: nstate = `jae;
-     16'h0f82: nstate = `jb;
-     16'h0f8f: nstate = `jg;
-     16'h0f8e: nstate = `jle;
-     16'h0f8d: nstate = `jge;
-     16'h0f8c: nstate = `jl;
-     16'h0f85: nstate = `jne;
-     16'h0f84: nstate = `je;     
-     16'h90bb: nstate = `imm;   
-     16'h8d9d: nstate = `lea;
-     16'h8d5d: nstate = `leas;
-     16'h90e8: nstate = `call;
-     16'h90c3: nstate = `ret;
-     16'hc1xx: nstate = `shift; 
-     16'hd3xx: nstate = `shift; 
-     16'hf7e1: nstate = `mul; 
-     16'hf7f9: nstate = `sdv1;   
-     16'hf7f1: nstate = `div1;   
-     16'hafc1: nstate = `sml1;    
-     16'hffd3: nstate = `calla; 
+   if (state == `fetch)
+    begin
+     casex({INTvalid,ID})
+     17'h1xxxx: nstate = `int1;
+     17'h090e9: nstate = `jmp;   
+     17'h00f87: nstate = `ja;
+     17'h00f86: nstate = `jbe;
+     17'h00f83: nstate = `jae;
+     17'h00f82: nstate = `jb;
+     17'h00f8f: nstate = `jg;
+     17'h00f8e: nstate = `jle;
+     17'h00f8d: nstate = `jge;
+     17'h00f8c: nstate = `jl;
+     17'h00f85: nstate = `jne;
+     17'h00f84: nstate = `je;     
+     17'h090bb: nstate = `imm;   
+     17'h08d9d: nstate = `lea;
+     17'h08d5d: nstate = `leas;
+     17'h090e8: nstate = `call;
+     17'h090c3: nstate = `ret;
+     17'h0c1xx: nstate = `shift; 
+     17'h0d3xx: nstate = `shift; 
+     17'h0f7e1: nstate = `mul; 
+     17'h0f7f9: nstate = `sdv1;   
+     17'h0f7f1: nstate = `div1;   
+     17'h0afc1: nstate = `sml1;    
+     17'h0ffd3: nstate = `calla; 
      default : nstate = `fetch;
     endcase
     if (ID       == 16'h9066) nprefx = 1'b1; else nprefx = 1'b0;
@@ -252,7 +265,8 @@ always @(ID,state,ECX,EBX_shtr,EAX,divF1,divF2)
    else 
    begin
         nprefx = 1'b0; cmpr   = 1'b0;
-	if((state==`mul)&&!(ECX==32'b0)) nstate=`mul;
+        if (state==`int1)  nstate = `int2;
+   else if((state==`mul)&&!(ECX==32'b0)) nstate=`mul;
    else if((state==`mul)&& (ECX==32'b0)) nstate=`mul2;
    else if (state==`mul2)  nstate = `fetch;   
    else if (state==`sml1)  nstate = `sml2;   
@@ -286,14 +300,16 @@ always @(ID,state,ECX,EBX_shtr,EAX,divF1,divF2)
    else                    nstate = `fetch;
    end   
  end
+assign INTvalid = INTreg & (WR | RD);
 assign ssregsrc = regsrc;
 assign ssregdest= regdest;
 assign  IA      = PC                ;
-assign  A       =((state == `call2)|(state == `calla2)) ?  ESP          : EBX      ;
-assign  Q       =((state == `call2)|(state == `calla2)) ?  incPC        : regsrc   ;
+assign  A       =((state == `call2)|(state == `calla2)|(state == `int2)) ?  ESP          : EBX      ;
+assign  Q       =((state == `call2)|(state == `calla2)|(state == `int2)) ?  incPC        : regsrc   ;
 assign  WEN     = (CE    ==   1'b0) ?  1'b1         :
                   (WR    ==   1'b1) ?  1'b0         :
                   (state == `call2) ?  1'b0         :
+                  (state == `int2 ) ?  1'b0         :
 		  (state == `calla2)?  1'b0         : 1'b1     ;
 assign  Sregsrc =       ID[8]       ? { {16{regsrc[15]}} , regsrc[15:0] } :
                                       { {24{regsrc[7] }} , regsrc[7:0]  } ;
