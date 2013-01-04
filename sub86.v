@@ -115,8 +115,9 @@ wire signed [31:0] ssregsrc, ssregdest;
 	`div1       : EBX<={          2'b00,EBX[29:0]};
 	`sdv2       : if (divF1==1'b0 ) EBX <= {EBX[31:5],(EBX[4:0]+1'b1)}; else EBX <= EBX;
 	`sdv3       : if (divF1==1'b1 ) EBX <= {EBX[31:5],EBX_shtr}; else EBX <= EBX;
-	default     : if (ID[15:8] == 8'hb3) EBX<= {EBX[31:24],ID[7:0]};
+	`fetch      : if (ID[15:8] == 8'hb3) EBX<= {EBX[31:24],ID[7:0]};
 	         else if (dest==3'b011) EBX <= alu_out; else EBX <= EBX;
+	default     : EBX <= EBX;
       endcase
       case(state)  // ECX control
         `init       : ECX <= 32'b0;
@@ -137,7 +138,7 @@ wire signed [31:0] ssregsrc, ssregdest;
 	default     : if (dest==3'b010) EDX <= alu_out; else EDX<=EDX;
       endcase     
       case(state)  // ESP control
-        `init              : ESP <= 32'h0161fc;
+        `init              : ESP <= 32'h0191fc;
         `call,`calla,`int1 : ESP <= ESP - 4'b0100;
         `ret2              : ESP <= ESP + 4'b0100; 
        default: if (dest==3'b100) ESP <= alu_out; else ESP<=ESP;
@@ -315,7 +316,8 @@ assign  Sregsrc =       ID[8]       ? { {16{regsrc[15]}} , regsrc[15:0] } :
                                       { {24{regsrc[7] }} , regsrc[7:0]  } ;
 assign  Zregsrc =       ID[8]       ? {  16'b0           , regsrc[15:0] } :
                                       {  24'b0           , regsrc[7:0]  } ;
-assign      BEN =((state == `call2)|(state == `calla2)) ? 1'b1 : { prefx   , ID[8]        } ;
+assign      BEN = (state == `fetch) ? { prefx   , ID[8]        } : 1'b1;
+//assign      BEN =((state == `call2)|(state == `calla2)) ? 1'b1 : { prefx   , ID[8]        } ;
 assign     neqF = (regsrc == regdest) ? 1'b1 : 1'b0;
 assign      nbF = (regsrc  > regdest) ? 1'b1 : 1'b0;
 assign      naF = ~(nlF | neqF );
